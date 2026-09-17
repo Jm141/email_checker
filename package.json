@@ -1,0 +1,14 @@
+{
+  "name": "email-checker-upgraded",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Bulk email/domain checker with MX, provider detection, SMTP best-effort verification, CSV export, and concurrency control.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}

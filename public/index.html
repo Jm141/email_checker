@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Email & Domain Checker</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: Arial, sans-serif; background: #f5f6f8; color: #222;
+    }
+    .wrap { max-width: 1250px; margin: 30px auto; padding: 0 18px; }
+    h1 { margin-bottom: 6px; }
+    .sub { color: #666; margin-top: 0; }
+    .card {
+      background: white; border: 1px solid #ddd; border-radius: 12px;
+      padding: 18px; margin: 16px 0; box-shadow: 0 2px 8px rgba(0,0,0,.04);
+    }
+    textarea {
+      width: 100%; min-height: 220px; resize: vertical; padding: 12px;
+      border: 1px solid #ccc; border-radius: 8px; font: 14px Consolas, monospace;
+    }
+    .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+    button {
+      border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer; font-weight: 700;
+    }
+    #checkBtn { background: #222; color: white; }
+    #clearBtn { background: #e8e8e8; }
+    #exportBtn { background: #e8e8e8; }
+    label { font-size: 13px; color: #555; }
+    input[type=number] { width: 85px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 10px; }
+    .stat { background: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 12px; }
+    .stat b { display: block; font-size: 22px; margin-top: 3px; }
+    .table-wrap { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 1000px; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; font-size: 13px; }
+    th { background: #fafafa; position: sticky; top: 0; }
+    .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .ok { background: #dff6e5; color: #176b2d; }
+    .bad { background: #ffe2e2; color: #a51f1f; }
+    .warn { background: #fff0c7; color: #805d00; }
+    .neutral { background: #e8edf5; color: #40516b; }
+    #loading { display:none; color:#555; }
+    .note { font-size: 13px; color:#666; line-height:1.5; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Email & Domain Checker</h1>
+  <p class="sub">Checks syntax, MX records, mail provider, and performs best-effort SMTP recipient verification.</p>
+
+  <div class="card">
+    <textarea id="input" placeholder="Paste one email or domain per line&#10;&#10;showroom@filmonhardware.com&#10;advisor.ph@gmail.com&#10;servio.ph"></textarea>
+
+    <div class="controls">
+      <button id="checkBtn">Check</button>
+      <button id="clearBtn">Clear</button>
+      <button id="exportBtn" disabled>Export CSV</button>
+
+      <label>
+        <input id="smtp" type="checkbox" checked>
+        SMTP mailbox check
+      </label>
+
+      <label>
+        Timeout:
+        <input id="timeout" type="number" min="2" max="15" value="7"> sec
+      </label>
+
+      <label>
+        Concurrent:
+        <input id="concurrency" type="number" min="1" max="10" value="3">
+      </label>
+
+      <span id="loading">Checking...</span>
+    </div>
+
+    <p class="note">
+      Important: SMTP verification is best-effort. Gmail, Microsoft 365, Yahoo and other providers may block,
+      delay, or intentionally obscure mailbox verification. A timeout means <b>UNKNOWN</b>, not automatically invalid.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="stats">
+      <div class="stat">Total <b id="sTotal">0</b></div>
+      <div class="stat">Deliverable <b id="sDeliverable">0</b></div>
+      <div class="stat">Not Deliverable <b id="sNotDeliverable">0</b></div>
+      <div class="stat">Unknown <b id="sUnknown">0</b></div>
+      <div class="stat">No MX <b id="sNoMx">0</b></div>
+      <div class="stat">Invalid <b id="sInvalid">0</b></div>
+      <div class="stat">Domains <b id="sDomains">0</b></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Input</th>
+            <th>Type</th>
+            <th>Domain</th>
+            <th>MX</th>
+            <th>Mail Host</th>
+            <th>Provider</th>
+            <th>Status</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody id="results"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+let lastResults = [];
+
+const $ = id => document.getElementById(id);
+
+function statusClass(status) {
+  if (status === "DELIVERABLE" || status === "MAIL_DOMAIN") return "ok";
+  if (status === "NOT_DELIVERABLE" || status === "NO_MX" || status === "INVALID") return "bad";
+  if (status === "NOT_VERIFIABLE") return "warn";
+  return "neutral";
+}
+
+function render(results) {
+  const body = $("results");
+  body.innerHTML = "";
+
+  results.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${i + 1}</td>
+      <td>${escapeHtml(r.input)}</td>
+      <td><b>${escapeHtml(r.type)}</b></td>
+      <td>${escapeHtml(r.domain)}</td>
+      <td>${escapeHtml(r.mx)}</td>
+      <td>${escapeHtml(r.mailHost || "")}</td>
+      <td>${escapeHtml(r.provider || "")}</td>
+      <td><span class="pill ${statusClass(r.status)}">${escapeHtml(r.status)}</span></td>
+      <td>${escapeHtml(r.message || "")}</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, ch => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+  }[ch]));
+}
+
+function setStats(results) {
+  const count = status => results.filter(r => r.status === status).length;
+  $("sTotal").textContent = results.length;
+  $("sDeliverable").textContent = count("DELIVERABLE");
+  $("sNotDeliverable").textContent = count("NOT_DELIVERABLE");
+  $("sUnknown").textContent = count("NOT_VERIFIABLE");
+  $("sNoMx").textContent = count("NO_MX");
+  $("sInvalid").textContent = count("INVALID");
+  $("sDomains").textContent = results.filter(r => r.type === "DOMAIN").length;
+}
+
+$("checkBtn").onclick = async () => {
+  const input = $("input").value.trim();
+  if (!input) return alert("Paste at least one email or domain.");
+
+  $("loading").style.display = "inline";
+  $("checkBtn").disabled = true;
+  $("exportBtn").disabled = true;
+
+  try {
+    const response = await fetch("/check", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        input,
+        smtp: $("smtp").checked,
+        timeoutMs: Number($("timeout").value) * 1000,
+        concurrency: Number($("concurrency").value)
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Request failed.");
+
+    lastResults = data.results || [];
+    render(lastResults);
+    setStats(lastResults);
+    $("exportBtn").disabled = lastResults.length === 0;
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    $("loading").style.display = "none";
+    $("checkBtn").disabled = false;
+  }
+};
+
+$("clearBtn").onclick = () => {
+  $("input").value = "";
+  lastResults = [];
+  render([]);
+  setStats([]);
+  $("exportBtn").disabled = true;
+};
+
+$("exportBtn").onclick = () => {
+  const headers = ["Input","Type","Domain","MX","Mail Host","Provider","Status","Code","Message"];
+  const rows = lastResults.map(r => [
+    r.input, r.type, r.domain, r.mx, r.mailHost, r.provider, r.status, r.code || "", r.message
+  ]);
+
+  const csv = [headers, ...rows]
+    .map(row => row.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\r\n");
+
+  const blob = new Blob([csv], {type: "text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "email-check-results.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+};
+</script>
+</body>
+</html>
